@@ -221,6 +221,9 @@
   }
   .exchange-card .top{display:flex;justify-content:space-between;font-size:14px;margin-bottom:2px;}
   .exchange-card .sub{font-size:12px;color:var(--muted);}
+  .ledger-scroll{overflow-y:auto;}
+  .subtotal-bar.always{background:var(--paper);color:var(--ink);border:1px solid var(--border);}
+  .fx-input{width:110px;text-align:right;}
 </style>
 </head>
 <body>
@@ -298,6 +301,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
