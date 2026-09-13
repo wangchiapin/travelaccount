@@ -16,7 +16,7 @@ const db = firebase.firestore();
 
 /* ========= constants ========= */
 const DEFAULT_CATEGORIES = ["交通", "住宿", "食物", "景點", "購物", "其他"];
-const DEFAULT_PAYMENT_METHODS = ["現金", "信用卡", "行動支付"];
+const DEFAULT_PAYMENT_METHODS = ["現金", "信用卡", "行動支付", "外幣帳戶"];
 const DEFAULT_PARTICIPANTS = [
   { id: "husband", name: "老公" },
   { id: "wife", name: "老婆" }
@@ -50,6 +50,7 @@ let unsubSettlements = null;
 let currentTab = "ledger";
 let ledgerFilters = { payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" };
 let filterPanelOpen = false;
+let pendingLedgerScroll = false;
 
 /* ========= helpers ========= */
 function $(sel) { return document.querySelector(sel); }
@@ -311,6 +312,7 @@ function openTrip(id) {
   currentTab = "ledger";
   ledgerFilters = { payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" };
   filterPanelOpen = false;
+  pendingLedgerScroll = true;
   $all(".tabbar button").forEach(b => b.classList.toggle("active", b.dataset.tab === "ledger"));
   hide($("#screen-trips"));
   show($("#screen-trip"));
@@ -357,6 +359,7 @@ $("#btn-logout").addEventListener("click", () => auth.signOut());
 $all(".tabbar button").forEach(btn => {
   btn.addEventListener("click", () => {
     currentTab = btn.dataset.tab;
+    if (currentTab === "ledger") pendingLedgerScroll = true;
     $all(".tabbar button").forEach(b => b.classList.toggle("active", b === btn));
     renderCurrentTab();
   });
@@ -435,13 +438,14 @@ function renderLedger() {
   const filtered = applyLedgerFilters(currentExpenses);
   const hasFilters = JSON.stringify(ledgerFilters) !== JSON.stringify({ payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" });
 
-  let html = `<button class="btn btn-sm" id="btn-toggle-filter" style="margin-bottom:12px;">🔍 篩選${hasFilters ? "（篩選中）" : ""}</button>`;
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
+    <button class="btn btn-sm" id="btn-toggle-filter">🔍 篩選${hasFilters ? "（篩選中）" : ""}</button>
+  </div>`;
   if (filterPanelOpen) html += filterPanelHtml();
 
-  if (hasFilters) {
-    const subtotal = filtered.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
-    html += `<div class="subtotal-bar"><span>符合條件 ${filtered.length} 筆</span><span class="n">台幣 ${fmt(subtotal)}</span></div>`;
-  }
+  const subtotalList = hasFilters ? filtered : currentExpenses;
+  const subtotal = subtotalList.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
+  html += `<div class="subtotal-bar always"><span>${hasFilters ? `符合條件 ${filtered.length} 筆` : "旅遊支出總計"}</span><span class="n">台幣 ${fmt(subtotal)}</span></div>`;
 
   if (filtered.length === 0) {
     html += `<div class="empty"><p>${currentExpenses.length === 0 ? "這趟旅行還沒有花費紀錄。<br>按下方「新增一筆」開始記帳。" : "沒有符合篩選條件的紀錄。"}</p></div>`;
@@ -455,7 +459,9 @@ function renderLedger() {
     const d = e.date || "未填日期";
     (byDay[d] = byDay[d] || []).push(e);
   });
-  const days = Object.keys(byDay).sort().reverse();
+  const days = Object.keys(byDay).sort(); // ascending: oldest first, newest last
+  const needsScroll = filtered.length > 10;
+  html += `<div class="${needsScroll ? "ledger-scroll" : ""}" id="ledger-list" style="${needsScroll ? "max-height:62vh;" : ""}">`;
   html += days.map(day => {
     const items = byDay[day];
     const dayTotal = items.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
@@ -465,6 +471,7 @@ function renderLedger() {
         ${items.map(e => entryRow(e)).join("")}
       </div>`;
   }).join("");
+  html += `</div>`;
 
   root.innerHTML = html;
   wireFilterEvents(root);
@@ -474,6 +481,15 @@ function renderLedger() {
       if (exp) openExpenseModal(exp);
     });
   });
+
+  if (pendingLedgerScroll) {
+    pendingLedgerScroll = false;
+    const listEl = $("#ledger-list", root) || root.querySelector("#ledger-list");
+    requestAnimationFrame(() => {
+      if (listEl) listEl.scrollTop = listEl.scrollHeight;
+      else window.scrollTo(0, document.body.scrollHeight);
+    });
+  }
 }
 
 function wireFilterEvents(root) {
@@ -524,6 +540,7 @@ function entryRow(e) {
       </div>
       <div class="entry-side">
         <div class="amt">台幣 ${fmt(total)}</div>
+        ${e.currency && e.currency !== "TWD" ? `<div style="font-size:11px;color:var(--muted);">${fmt(e.amount)} ${escapeHtml(e.currency)}</div>` : ""}
         ${sideHtml}
       </div>
     </div>`;
@@ -783,10 +800,30 @@ function openExpenseModal(existing) {
 function renderSettle() {
   const root = $("#tab-settle");
   const participants = currentTrip.participants || DEFAULT_PARTICIPANTS;
+  const foreignCurrencies = (currentTrip.currencies || []).filter(c => c.code !== "TWD");
   const shared = currentExpenses.filter(e => e.splitEven !== false);
   const total = shared.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
   const fairShare = participants.length ? total / participants.length : 0;
 
+  // --- row 1: overall spend breakdown ---
+  const grandTotalTwd = currentExpenses.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
+  const rawByCurrency = {};
+  foreignCurrencies.forEach(c => rawByCurrency[c.code] = 0);
+  currentExpenses.forEach(e => { if (rawByCurrency[e.currency] != null) rawByCurrency[e.currency] += Number(e.amount) || 0; });
+  const creditCardTotal = currentExpenses.filter(e => e.paymentMethod === "信用卡").reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
+
+  // --- row 2: per-person totals (all expenses, regardless of split) ---
+  const totalSpentByPerson = {};
+  participants.forEach(p => totalSpentByPerson[p.id] = 0);
+  currentExpenses.forEach(e => {
+    if (e.splits && e.splits.length) {
+      e.splits.forEach(s => { if (totalSpentByPerson[s.payerId] != null) totalSpentByPerson[s.payerId] += s.amount; });
+    } else if (totalSpentByPerson[e.payerId] != null) {
+      totalSpentByPerson[e.payerId] += (e.twd || 0) + (e.fee || 0);
+    }
+  });
+
+  // --- settlement balances (even-split only) ---
   const paidByPerson = {};
   participants.forEach(p => paidByPerson[p.id] = 0);
   shared.forEach(e => {
@@ -796,7 +833,6 @@ function renderSettle() {
       paidByPerson[e.payerId] += (e.twd || 0) + (e.fee || 0);
     }
   });
-
   const personalTotals = {};
   participants.forEach(p => personalTotals[p.id] = 0);
   currentExpenses.filter(e => e.splitEven === false).forEach(e => {
@@ -806,16 +842,38 @@ function renderSettle() {
       personalTotals[e.payerId] += (e.twd || 0) + (e.fee || 0);
     }
   });
-
-  // net effect of already-recorded settlements (money paid directly between people)
   const settledNet = {};
   participants.forEach(p => settledNet[p.id] = 0);
   currentSettlements.forEach(s => {
-    if (settledNet[s.fromId] != null) settledNet[s.fromId] += s.amount; // paid down what they owed
-    if (settledNet[s.toId] != null) settledNet[s.toId] -= s.amount;     // already received part of what they're owed
+    if (settledNet[s.fromId] != null) settledNet[s.fromId] += s.amount;
+    if (settledNet[s.toId] != null) settledNet[s.toId] -= s.amount;
   });
 
+  // --- foreign currency reconciliation (cash only) ---
+  const actualRemaining = currentTrip.actualRemaining || {};
+  const cashSpentByCur = {};
+  currentExpenses.forEach(e => {
+    if (e.currency && e.currency !== "TWD" && e.paymentMethod === "現金") {
+      cashSpentByCur[e.currency] = (cashSpentByCur[e.currency] || 0) + (Number(e.amount) || 0);
+    }
+  });
+  const exchangedByCur = {};
+  currentExchanges.forEach(x => { exchangedByCur[x.toCurrency] = (exchangedByCur[x.toCurrency] || 0) + (Number(x.toAmount) || 0); });
+
   root.innerHTML = `
+    <div class="section-title" style="margin-top:0;">旅遊總支出</div>
+    <div class="metric-grid" style="grid-template-columns:repeat(${2 + foreignCurrencies.length},minmax(120px,1fr));overflow-x:auto;display:flex;gap:10px;">
+      <div class="metric-card" style="flex:0 0 auto;"><div class="lbl">台幣總支出</div><div class="val">${fmt(grandTotalTwd)}</div></div>
+      ${foreignCurrencies.map(c => `<div class="metric-card" style="flex:0 0 auto;"><div class="lbl">${escapeHtml(c.code)} 原幣支出</div><div class="val">${fmt(rawByCurrency[c.code] || 0)}</div></div>`).join("")}
+      <div class="metric-card" style="flex:0 0 auto;"><div class="lbl">信用卡支出（台幣）</div><div class="val">${fmt(creditCardTotal)}</div></div>
+    </div>
+
+    <div class="section-title">每人總計支出</div>
+    <div class="metric-grid">
+      ${participants.map(p => `<div class="metric-card"><div class="lbl">${escapeHtml(p.name)}</div><div class="val">${fmt(totalSpentByPerson[p.id] || 0)}</div></div>`).join("")}
+    </div>
+
+    <div class="section-title">均分結算</div>
     <div class="metric-grid">
       <div class="metric-card"><div class="lbl">列入均分總額</div><div class="val">${fmt(total)}</div></div>
       <div class="metric-card"><div class="lbl">每人應付（${participants.length} 人）</div><div class="val">${fmt(fairShare)}</div></div>
@@ -834,16 +892,54 @@ function renderSettle() {
         <div class="person-row">
           <div>
             <div class="name">${escapeHtml(p.name)}</div>
-            <div class="paid">已付 ${fmt(paid)}${personal ? `　個人花費 ${fmt(personal)}` : ""}</div>
+            <div class="paid">均分已付 ${fmt(paid)}${personal ? `　個人花費 ${fmt(personal)}` : ""}</div>
           </div>
           ${badge}
         </div>`;
     }).join("")}
 
+    ${foreignCurrencies.length ? `
+      <div class="section-title">外幣現金結餘</div>
+      <div id="fx-recon"></div>
+    ` : ""}
+
     <div class="section-title">已結清紀錄</div>
     <div id="settle-log"></div>
     <button class="btn btn-sm" id="btn-add-settlement" style="margin-top:6px;">＋ 記一筆已還款</button>
   `;
+
+  if (foreignCurrencies.length) {
+    const fxRoot = $("#fx-recon");
+    fxRoot.innerHTML = foreignCurrencies.map(c => {
+      const exchanged = exchangedByCur[c.code] || 0;
+      const spent = cashSpentByCur[c.code] || 0;
+      const a = exchanged - spent;
+      const b = actualRemaining[c.code] != null ? actualRemaining[c.code] : "";
+      return `
+        <div class="person-row" style="flex-wrap:wrap;">
+          <div style="width:100%;margin-bottom:8px;"><span class="name">${escapeHtml(c.code)}</span>
+            <span style="font-size:12px;color:var(--muted);"> 換匯 ${fmt(exchanged)} － 現金支出 ${fmt(spent)}</span></div>
+          <div class="row-inline" style="width:100%;justify-content:space-between;">
+            <div><div class="paid">應結餘 A</div><div class="name">${fmt(a)}</div></div>
+            <div><div class="paid">實際結餘 B</div><input type="number" class="fx-input fx-actual" data-cur="${c.code}" value="${b}" placeholder="自行輸入"></div>
+            <div><div class="paid">不知去向 (A－B)</div><div class="name">${b === "" ? "—" : fmt(a - Number(b))}</div></div>
+          </div>
+        </div>`;
+    }).join("");
+    fxRoot.querySelectorAll(".fx-actual").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const cur = inp.dataset.cur;
+        const val = inp.value === "" ? firebase.firestore.FieldValue.delete() : Number(inp.value);
+        const path = `actualRemaining.${cur}`;
+        tripsRef().doc(currentTripId).update({ [path]: val }).catch(() => {
+          // fallback if field path update fails (e.g. actualRemaining not yet an object)
+          const merged = { ...(currentTrip.actualRemaining || {}) };
+          if (inp.value === "") delete merged[cur]; else merged[cur] = Number(inp.value);
+          tripsRef().doc(currentTripId).update({ actualRemaining: merged });
+        });
+      });
+    });
+  }
 
   const logRoot = $("#settle-log");
   if (currentSettlements.length === 0) {
@@ -948,7 +1044,7 @@ function renderExchange() {
   } else {
     html += currentExchanges.map(x => {
       const p = (currentTrip.participants || []).find(pp => pp.id === x.payerId);
-      const rate = x.toAmount ? (x.fromAmount / x.toAmount) : 0;
+      const rate = x.rate || (x.toAmount ? (x.fromAmount / x.toAmount) : 0);
       return `
         <div class="exchange-card" data-id="${x.id}">
           <div class="top"><span>台幣 ${fmt(x.fromAmount)} → ${fmt(x.toAmount)} ${escapeHtml(x.toCurrency)}</span><span>匯率 ${rate.toFixed(4)}</span></div>
@@ -986,12 +1082,23 @@ function openExchangeModal() {
       <div class="field"><label>換成哪個幣別</label>
         <select id="x-currency">${currencies.map(c => `<option value="${c.code}">${escapeHtml(c.code)}</option>`).join("")}</select>
       </div>
-      <div class="field"><label>換到多少外幣</label><input id="x-to" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>匯率（1 外幣 = 多少台幣，這次實際換匯的匯率）</label><input id="x-rate" type="number" step="0.0001" inputmode="decimal" placeholder="例如 0.21"></div>
+      <div class="field"><label>換到多少外幣（會自動算，也可以手動改）</label><input id="x-to" type="number" inputmode="decimal" placeholder="0"></div>
       <div class="field"><label>備註</label><textarea id="x-note" rows="2" placeholder="選填，例如：在哪裡換的"></textarea></div>
       <button class="btn btn-primary btn-block" id="x-save">儲存</button>
     </div>`;
   $("#modal-root").appendChild(modal);
   let payerId = participants[0] ? participants[0].id : "";
+  let toTouched = false;
+  function recalcTo() {
+    if (toTouched) return;
+    const from = Number(modal.querySelector("#x-from").value) || 0;
+    const rate = Number(modal.querySelector("#x-rate").value) || 0;
+    if (rate > 0) modal.querySelector("#x-to").value = (from / rate).toFixed(2);
+  }
+  modal.querySelector("#x-from").addEventListener("input", recalcTo);
+  modal.querySelector("#x-rate").addEventListener("input", recalcTo);
+  modal.querySelector("#x-to").addEventListener("input", () => { toTouched = true; });
   modal.querySelector("#m-close").addEventListener("click", () => modal.remove());
   modal.querySelector("#x-payer").addEventListener("click", e => {
     if (!e.target.dataset.id) return;
@@ -1001,10 +1108,11 @@ function openExchangeModal() {
   modal.querySelector("#x-save").addEventListener("click", async () => {
     const fromAmount = Number(modal.querySelector("#x-from").value) || 0;
     const toAmount = Number(modal.querySelector("#x-to").value) || 0;
+    const rate = Number(modal.querySelector("#x-rate").value) || (toAmount ? fromAmount / toAmount : 0);
     if (!fromAmount || !toAmount) { toast("請輸入台幣與外幣金額"); return; }
     await exchangesRef(currentTripId).add({
       date: modal.querySelector("#x-date").value || todayStr(),
-      payerId, fromAmount, toAmount,
+      payerId, fromAmount, toAmount, rate,
       toCurrency: modal.querySelector("#x-currency").value,
       note: modal.querySelector("#x-note").value.trim(),
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -1037,6 +1145,7 @@ function renderSettings() {
     <div class="chip-row" id="s-categories">
       ${categories.map(c => `<span class="chip" data-cat="${escapeHtml(c)}">${escapeHtml(c)} ✕</span>`).join("")}
     </div>
+    <button class="btn btn-sm" id="s-add-category" style="margin-top:8px;">＋ 新增類別</button>
 
     <div class="section-title">付款方式</div>
     <div class="chip-row" id="s-methods">
@@ -1045,10 +1154,10 @@ function renderSettings() {
     <button class="btn btn-sm" id="s-add-method" style="margin-top:8px;">＋ 新增付款方式</button>
 
     <div class="section-title">資料備份</div>
-    <button class="btn btn-block" id="s-export" style="margin-bottom:8px;">匯出這趟旅行（JSON）</button>
+    <button class="btn btn-block" id="s-export" style="margin-bottom:8px;">匯出這趟旅行（Excel）</button>
     <label class="btn btn-block" style="display:flex;">
-      匯入花費紀錄（JSON）
-      <input type="file" id="s-import" accept="application/json" class="hidden">
+      匯入花費紀錄（Excel）
+      <input type="file" id="s-import" accept=".xlsx,.xls" class="hidden">
     </label>
 
     <div class="section-title">危險區</div>
@@ -1123,6 +1232,12 @@ function renderSettings() {
     const list = categories.filter(c => c !== cat);
     tripsRef().doc(currentTripId).update({ categories: list });
   });
+  $("#s-add-category").addEventListener("click", () => {
+    const name = prompt("新增類別名稱：");
+    if (!name || !name.trim()) return;
+    const list = Array.from(new Set([...categories, name.trim()]));
+    tripsRef().doc(currentTripId).update({ categories: list });
+  });
 
   // payment methods
   $("#s-methods").addEventListener("click", e => {
@@ -1142,42 +1257,134 @@ function renderSettings() {
   $("#s-edit-trip").addEventListener("click", () => openTripEditModal(currentTrip));
 
   $("#s-export").addEventListener("click", () => {
-    const data = { trip: currentTrip, expenses: currentExpenses, exchanges: currentExchanges, settlements: currentSettlements };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${currentTrip.name}.json`;
-    a.click();
+    const wb = XLSX.utils.book_new();
+
+    const expRows = currentExpenses.map(e => {
+      let payerName = "", splitDetail = "";
+      if (e.splits && e.splits.length) {
+        splitDetail = e.splits.map(s => {
+          const p = (currentTrip.participants || []).find(x => x.id === s.payerId);
+          return `${p ? p.name : s.payerId}:${s.amount}`;
+        }).join(";");
+      } else {
+        const p = (currentTrip.participants || []).find(x => x.id === e.payerId);
+        payerName = p ? p.name : "";
+      }
+      return {
+        日期: e.date, 類別: e.category, 名稱: e.name, 幣別: e.currency,
+        金額: e.amount, 手續費: e.fee || 0, 台幣金額: e.twd || 0,
+        付款方式: e.paymentMethod || "", 支出人: payerName, 分攤明細: splitDetail,
+        列入均分: e.splitEven !== false ? "是" : "否", 備註: e.note || ""
+      };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expRows), "支出");
+
+    const exRows = currentExchanges.map(x => {
+      const p = (currentTrip.participants || []).find(pp => pp.id === x.payerId);
+      return { 日期: x.date, 誰出的台幣: p ? p.name : "", 出多少台幣: x.fromAmount, 換成幣別: x.toCurrency, 匯率: x.rate || "", 換到多少外幣: x.toAmount, 備註: x.note || "" };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(exRows), "換匯");
+
+    const setRows = currentSettlements.map(s => {
+      const from = (currentTrip.participants || []).find(p => p.id === s.fromId);
+      const to = (currentTrip.participants || []).find(p => p.id === s.toId);
+      return { 日期: s.date, 誰付: from ? from.name : "", 付給誰: to ? to.name : "", 金額: s.amount, 備註: s.note || "" };
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(setRows), "結清紀錄");
+
+    XLSX.writeFile(wb, `${currentTrip.name}.xlsx`);
   });
 
   $("#s-import").addEventListener("change", async ev => {
     const file = ev.target.files[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      const list = Array.isArray(data) ? data : (data.expenses || []);
-      if (!list.length) { toast("找不到可匯入的花費資料"); return; }
-      const batch = db.batch();
-      list.forEach(e => {
-        const ref = expensesRef(currentTripId).doc();
-        batch.set(ref, {
-          date: e.date || todayStr(),
-          category: e.category || "其他",
-          name: e.name || "",
-          currency: e.currency || "TWD",
-          amount: Number(e.amount) || 0,
-          fee: Number(e.fee) || 0,
-          twd: e.twd != null ? Number(e.twd) : toTwd(e.amount, e.currency || "TWD", currentTrip),
-          payerId: e.payerId || (currentTrip.participants[0] || {}).id,
-          splitEven: e.splitEven !== false,
-          note: e.note || "",
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+
+      let newParticipants = [...(currentTrip.participants || [])];
+      let newCategories = [...(currentTrip.categories || DEFAULT_CATEGORIES)];
+      let newMethods = [...(currentTrip.paymentMethods || DEFAULT_PAYMENT_METHODS)];
+      function ensureParticipant(name) {
+        name = (name || "").trim();
+        if (!name) return null;
+        let p = newParticipants.find(x => x.name === name);
+        if (!p) { p = { id: "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6), name }; newParticipants.push(p); }
+        return p.id;
+      }
+
+      const expSheet = wb.Sheets["支出"];
+      const expRows = expSheet ? XLSX.utils.sheet_to_json(expSheet) : [];
+      const exSheet = wb.Sheets["換匯"];
+      const exRows = exSheet ? XLSX.utils.sheet_to_json(exSheet) : [];
+      const setSheet = wb.Sheets["結清紀錄"];
+      const setRows = setSheet ? XLSX.utils.sheet_to_json(setSheet) : [];
+
+      const expensesToAdd = expRows.map(r => {
+        const cat = r["類別"] || "其他";
+        if (!newCategories.includes(cat)) newCategories.push(cat);
+        const method = r["付款方式"] || "";
+        if (method && !newMethods.includes(method)) newMethods.push(method);
+        let payerId = null, splits;
+        if (r["分攤明細"]) {
+          splits = String(r["分攤明細"]).split(";").filter(Boolean).map(pair => {
+            const [n, amt] = pair.split(":");
+            return { payerId: ensureParticipant(n), amount: Number(amt) || 0 };
+          });
+        } else if (r["支出人"]) {
+          payerId = ensureParticipant(r["支出人"]);
+        }
+        const currency = r["幣別"] || "TWD";
+        const amount = Number(r["金額"]) || 0;
+        const fee = Number(r["手續費"]) || 0;
+        const twd = r["台幣金額"] != null && r["台幣金額"] !== "" ? Number(r["台幣金額"]) : toTwd(amount, currency, currentTrip);
+        const payload = {
+          date: r["日期"] ? String(r["日期"]) : todayStr(),
+          category: cat, name: r["名稱"] || "", currency, amount, fee, twd,
+          paymentMethod: method, payerId,
+          splitEven: r["列入均分"] === "否" ? false : true,
+          note: r["備註"] || "",
           createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        };
+        if (splits && splits.length) payload.splits = splits;
+        return payload;
       });
+
+      const exchangesToAdd = exRows.map(r => ({
+        date: r["日期"] ? String(r["日期"]) : todayStr(),
+        payerId: ensureParticipant(r["誰出的台幣"]),
+        fromAmount: Number(r["出多少台幣"]) || 0,
+        toCurrency: r["換成幣別"] || "",
+        rate: Number(r["匯率"]) || 0,
+        toAmount: Number(r["換到多少外幣"]) || 0,
+        note: r["備註"] || "",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      }));
+
+      const settlementsToAdd = setRows.map(r => ({
+        date: r["日期"] ? String(r["日期"]) : todayStr(),
+        fromId: ensureParticipant(r["誰付"]),
+        toId: ensureParticipant(r["付給誰"]),
+        amount: Number(r["金額"]) || 0,
+        note: r["備註"] || "",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      }));
+
+      if (!expensesToAdd.length && !exchangesToAdd.length && !settlementsToAdd.length) {
+        toast("找不到可匯入的資料"); ev.target.value = ""; return;
+      }
+
+      await tripsRef().doc(currentTripId).update({ participants: newParticipants, categories: newCategories, paymentMethods: newMethods });
+
+      const batch = db.batch();
+      expensesToAdd.forEach(e => batch.set(expensesRef(currentTripId).doc(), e));
+      exchangesToAdd.forEach(x => batch.set(exchangesRef(currentTripId).doc(), x));
+      settlementsToAdd.forEach(s => batch.set(settlementsRef(currentTripId).doc(), s));
       await batch.commit();
-      toast(`已匯入 ${list.length} 筆`);
+
+      toast(`已匯入 ${expensesToAdd.length} 筆支出、${exchangesToAdd.length} 筆換匯、${settlementsToAdd.length} 筆結清`);
     } catch (err) {
+      console.error(err);
       toast("匯入失敗，請確認檔案格式");
     }
     ev.target.value = "";
