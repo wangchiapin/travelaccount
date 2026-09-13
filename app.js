@@ -15,7 +15,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 /* ========= constants ========= */
-const DEFAULT_CATEGORIES = ["交通", "住宿", "食物", "景點", "購物", "其他"];
+const DEFAULT_CATEGORIES = ["交通", "住宿", "食物", "景點", "購物", "退稅", "其他"];
 const DEFAULT_PAYMENT_METHODS = ["現金", "信用卡", "行動支付", "外幣帳戶"];
 const DEFAULT_PARTICIPANTS = [
   { id: "husband", name: "老公" },
@@ -26,6 +26,33 @@ const RAMPS = [
   { bg: "var(--jade-tint)", fg: "var(--jade-dark)" },
   { bg: "var(--gold-tint)", fg: "var(--gold)" }
 ];
+const CATEGORY_PHRASES = {
+  "交通": ["移動也是旅行的一部分！🚃", "下一站，冒險繼續！🧳", "安全抵達最重要 🛫"],
+  "住宿": ["今晚好好睡一覺～🛏️", "累了就該善待自己 🧸", "睡得好，玩得更好 💤"],
+  "食物": ["美食不能辜負！🍡", "吃飽才有力氣繼續玩 🍜", "旅行的意義就是吃！🧋"],
+  "景點": ["回憶又多一頁 📸", "這風景，值得！🌸", "打卡成功～✨"],
+  "購物": ["買起來吧！🛍️", "旅遊就是要買買買 🎀", "戰利品 +1 🧸"],
+  "其他": ["小開銷，搞定！🌷", "生活雜項也要記一筆 📝"]
+};
+const SPLIT_FALSE_PHRASES = ["犒賞自己，值得！🎁", "偷偷寵愛自己一下 🍬", "這筆算我的，開心就好 🌈"];
+const REFUND_PHRASES = ["退錢真開心！💰", "賺到了！🎉"];
+function showCheer(category, splitEven, total) {
+  let pool;
+  if (total < 0) pool = REFUND_PHRASES;
+  else if (splitEven === false) pool = SPLIT_FALSE_PHRASES;
+  else pool = CATEGORY_PHRASES[category] || CATEGORY_PHRASES["其他"];
+  const msg = pool[Math.floor(Math.random() * pool.length)];
+  const root = $("#cheer-root");
+  const el = document.createElement("div");
+  el.className = "cheer-popup";
+  el.textContent = msg;
+  root.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, 2000);
+}
 const ICONS = {
   plus: "M12 5v14M5 12h14",
   back: "M15 18l-6-6 6-6"
@@ -45,12 +72,17 @@ let currentTrip = null;
 let currentExpenses = [];
 let currentExchanges = [];
 let currentSettlements = [];
+let currentQuicknotes = [];
 let unsubExchanges = null;
 let unsubSettlements = null;
+let unsubQuicknotes = null;
 let currentTab = "ledger";
 let ledgerFilters = { payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" };
 let filterPanelOpen = false;
 let pendingLedgerScroll = false;
+let qnCandidates = [];
+let qnFails = [];
+let qnDbChecked = {};
 
 /* ========= helpers ========= */
 function $(sel) { return document.querySelector(sel); }
@@ -234,6 +266,9 @@ function exchangesRef(tripId) {
 function settlementsRef(tripId) {
   return tripsRef().doc(tripId).collection("settlements");
 }
+function quicknotesRef(tripId) {
+  return tripsRef().doc(tripId).collection("quicknotes");
+}
 
 function listenTrips() {
   if (unsubTrips) unsubTrips();
@@ -319,6 +354,7 @@ function openTrip(id) {
   if (unsubExpenses) unsubExpenses();
   if (unsubExchanges) unsubExchanges();
   if (unsubSettlements) unsubSettlements();
+  if (unsubQuicknotes) unsubQuicknotes();
   unsubExpenses = expensesRef(id).orderBy("date", "desc").onSnapshot(snap => {
     currentExpenses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderCurrentTab();
@@ -331,6 +367,10 @@ function openTrip(id) {
     currentSettlements = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (currentTab === "settle") renderCurrentTab();
   }, () => toast("讀取結清紀錄失敗"));
+  unsubQuicknotes = quicknotesRef(id).orderBy("createdAt", "asc").onSnapshot(snap => {
+    currentQuicknotes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (currentTab === "quicknote") renderCurrentTab();
+  }, () => toast("讀取隨手記失敗"));
   unsubTripDoc();
 }
 let unsubTripDocFn = null;
@@ -348,8 +388,9 @@ $("#btn-back-trips").addEventListener("click", () => {
   if (unsubExpenses) unsubExpenses();
   if (unsubExchanges) unsubExchanges();
   if (unsubSettlements) unsubSettlements();
+  if (unsubQuicknotes) unsubQuicknotes();
   if (unsubTripDocFn) unsubTripDocFn();
-  currentTripId = null; currentTrip = null; currentExpenses = []; currentExchanges = []; currentSettlements = [];
+  currentTripId = null; currentTrip = null; currentExpenses = []; currentExchanges = []; currentSettlements = []; currentQuicknotes = [];
   hide($("#screen-trip"));
   show($("#screen-trips"));
   renderTripsList();
@@ -367,12 +408,13 @@ $all(".tabbar button").forEach(btn => {
 
 function renderCurrentTab() {
   if (!currentTrip) return;
-  ["ledger", "settle", "exchange", "settings"].forEach(t => {
+  ["ledger", "settle", "exchange", "quicknote", "settings"].forEach(t => {
     (t === currentTab ? show : hide)($("#tab-" + t));
   });
   if (currentTab === "ledger") renderLedger();
   if (currentTab === "settle") renderSettle();
   if (currentTab === "exchange") renderExchange();
+  if (currentTab === "quicknote") renderQuicknote();
   if (currentTab === "settings") renderSettings();
 }
 
@@ -519,6 +561,8 @@ function entryRow(e) {
   const total = (e.twd || 0) + (e.fee || 0);
   const noteTag = e.splitEven === false ? " · 不分攤" : "";
   const methodTag = e.paymentMethod ? " · " + escapeHtml(e.paymentMethod) : "";
+  const taxTag = e.taxRefundable ? " · 🧾可退稅" : "";
+  const needsReview = e.quickAdd === true && (!e.paymentMethod || (!e.payerId && !(e.splits && e.splits.length)));
   let sideHtml;
   if (e.splits && e.splits.length) {
     sideHtml = e.splits.map(s => {
@@ -532,11 +576,11 @@ function entryRow(e) {
     sideHtml = payer ? `<span class="badge" style="background:${payerColor.bg};color:${payerColor.fg};">${escapeHtml(payer.name)}</span>` : "";
   }
   return `
-    <div class="entry" data-id="${e.id}">
+    <div class="entry${needsReview ? " quick-pending" : ""}" data-id="${e.id}">
       <div class="cat-dot" style="background:${c.bg};color:${c.fg};">${escapeHtml(cat.slice(0, 2))}</div>
       <div class="entry-main">
-        <div class="name">${escapeHtml(e.name || "")}${total < 0 ? " (退款)" : ""}</div>
-        <div class="meta">${escapeHtml(cat)}${methodTag}${noteTag}</div>
+        <div class="name">${escapeHtml(e.name || "")}${total < 0 ? " (退款)" : ""}${needsReview ? " 📝" : ""}</div>
+        <div class="meta">${escapeHtml(cat)}${methodTag}${noteTag}${taxTag}</div>
       </div>
       <div class="entry-side">
         <div class="amt">台幣 ${fmt(total)}</div>
@@ -567,6 +611,7 @@ function openExpenseModal(existing) {
     payerId: existing ? existing.payerId : participants[0].id,
     splitEven: existing ? existing.splitEven !== false : true,
     note: existing ? existing.note || "" : "",
+    taxRefundable: existing ? !!existing.taxRefundable : false,
     multiPayer: !!(existing && existing.splits && existing.splits.length),
     splits: existing && existing.splits ? existing.splits.map(s => ({ ...s })) : participants.map(p => ({ payerId: p.id, amount: "" }))
   };
@@ -639,6 +684,13 @@ function openExpenseModal(existing) {
         <div class="switch-row">
           <span>列入均分計算</span>
           <button type="button" class="switch${state.splitEven ? " on" : ""}" id="f-split"><span class="knob"></span></button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="switch-row">
+          <span>🧾 可退稅</span>
+          <button type="button" class="switch${state.taxRefundable ? " on" : ""}" id="f-taxrefund"><span class="knob"></span></button>
         </div>
       </div>
 
@@ -748,6 +800,11 @@ function openExpenseModal(existing) {
     modal.querySelector("#f-split").classList.toggle("on", state.splitEven);
   });
 
+  modal.querySelector("#f-taxrefund").addEventListener("click", () => {
+    state.taxRefundable = !state.taxRefundable;
+    modal.querySelector("#f-taxrefund").classList.toggle("on", state.taxRefundable);
+  });
+
   modal.querySelector("#f-save").addEventListener("click", async () => {
     const name = modal.querySelector("#f-name").value.trim();
     const amount = Number(modal.querySelector("#f-amount").value);
@@ -761,6 +818,7 @@ function openExpenseModal(existing) {
       date, category: state.category, name, currency, amount, fee, twd,
       paymentMethod: state.paymentMethod,
       splitEven: state.splitEven,
+      taxRefundable: state.taxRefundable,
       note: modal.querySelector("#f-note").value.trim()
     };
     if (state.multiPayer) {
@@ -779,7 +837,11 @@ function openExpenseModal(existing) {
       payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
       await expensesRef(currentTripId).add(payload);
       toast("已新增");
+      showCheer(state.category, state.splitEven, twd + fee);
     } else {
+      if (payload.paymentMethod && (payload.payerId || (payload.splits && payload.splits.length))) {
+        payload.quickAdd = false;
+      }
       await expensesRef(currentTripId).doc(existing.id).update(payload);
       toast("已更新");
     }
@@ -860,6 +922,8 @@ function renderSettle() {
   const exchangedByCur = {};
   currentExchanges.forEach(x => { exchangedByCur[x.toCurrency] = (exchangedByCur[x.toCurrency] || 0) + (Number(x.toAmount) || 0); });
 
+  const taxRefundTotal = currentExpenses.filter(e => e.category === "退稅").reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
+
   root.innerHTML = `
     <div class="section-title" style="margin-top:0;">旅遊總支出</div>
     <div class="metric-grid" style="grid-template-columns:repeat(${2 + foreignCurrencies.length},minmax(120px,1fr));overflow-x:auto;display:flex;gap:10px;">
@@ -902,6 +966,13 @@ function renderSettle() {
       <div class="section-title">外幣現金結餘</div>
       <div id="fx-recon"></div>
     ` : ""}
+
+    <div class="section-title">退稅</div>
+    <div class="metric-card" style="margin-bottom:10px;">
+      <div class="lbl">實際退稅總額</div>
+      <div class="val">${fmt(taxRefundTotal)}</div>
+    </div>
+    <button class="btn btn-sm" id="btn-add-taxrefund">＋ 記錄退稅收到</button>
 
     <div class="section-title">已結清紀錄</div>
     <div id="settle-log"></div>
@@ -964,6 +1035,75 @@ function renderSettle() {
   }
 
   $("#btn-add-settlement").addEventListener("click", () => openSettlementModal(participants));
+  $("#btn-add-taxrefund").addEventListener("click", () => openTaxRefundModal());
+}
+
+function openTaxRefundModal() {
+  const participants = currentTrip.participants || DEFAULT_PARTICIPANTS;
+  const currencies = currentTrip.currencies || [{ code: "TWD", name: "台幣", rate: 1 }];
+  let payerId = null; // null = 共同基金
+  const modal = document.createElement("div");
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-sheet">
+      <div class="modal-head"><h2>記錄退稅收到</h2><button class="icon-btn" id="m-close">✕</button></div>
+      <div class="field"><label>日期</label><input id="tr-date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label>收到多少退稅</label>
+        <div class="amount-row">
+          <select id="tr-currency">
+            ${currencies.map(c => `<option value="${c.code}">${escapeHtml(c.code)}</option>`).join("")}
+          </select>
+          <input id="tr-amount" type="number" inputmode="decimal" placeholder="0">
+        </div>
+        <div class="convert-hint" id="tr-hint"></div>
+      </div>
+      <div class="field"><label>這筆算誰的</label>
+        <div class="payer-row" id="tr-payer">
+          <button type="button" data-id="" class="active">共同基金</button>
+          ${participants.map(p => `<button type="button" data-id="${p.id}">${escapeHtml(p.name)}</button>`).join("")}
+        </div>
+      </div>
+      <div class="field"><label>備註</label><textarea id="tr-note" rows="2" placeholder="選填，例如：機場退稅櫃檯"></textarea></div>
+      <p style="font-size:12px;color:var(--muted);">這筆會記成一筆「退稅」類別的支出（金額為負數）。選「共同基金」代表不歸屬任何人，會平均降低每人應付；選特定人代表這筆錢是他拿走的，會從他的已付金額中扣除。</p>
+      <button class="btn btn-primary btn-block" id="tr-save">儲存</button>
+    </div>`;
+  $("#modal-root").appendChild(modal);
+
+  function updateHint() {
+    const amt = Number(modal.querySelector("#tr-amount").value) || 0;
+    const cur = modal.querySelector("#tr-currency").value;
+    if (cur === "TWD") { modal.querySelector("#tr-hint").textContent = ""; return; }
+    const twd = toTwd(amt, cur, currentTrip);
+    modal.querySelector("#tr-hint").textContent = `≈ 台幣 ${fmt(twd)}`;
+  }
+  updateHint();
+  modal.querySelector("#tr-amount").addEventListener("input", updateHint);
+  modal.querySelector("#tr-currency").addEventListener("change", updateHint);
+
+  modal.querySelector("#m-close").addEventListener("click", () => modal.remove());
+  modal.querySelector("#tr-payer").addEventListener("click", e => {
+    if (e.target.dataset.id === undefined) return;
+    modal.querySelectorAll("#tr-payer button").forEach(b => b.classList.remove("active"));
+    e.target.classList.add("active");
+    payerId = e.target.dataset.id || null;
+  });
+
+  modal.querySelector("#tr-save").addEventListener("click", async () => {
+    const amount = Number(modal.querySelector("#tr-amount").value) || 0;
+    const currency = modal.querySelector("#tr-currency").value;
+    if (!amount) { toast("請輸入金額"); return; }
+    const twd = toTwd(amount, currency, currentTrip);
+    await expensesRef(currentTripId).add({
+      date: modal.querySelector("#tr-date").value || todayStr(),
+      category: "退稅", name: "退稅收到", currency,
+      amount: -amount, fee: 0, twd: -twd,
+      paymentMethod: "", payerId, splitEven: true, taxRefundable: false,
+      note: modal.querySelector("#tr-note").value.trim(),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    modal.remove();
+    toast("已記錄");
+  });
 }
 
 function openSettlementModal(participants) {
@@ -1123,6 +1263,191 @@ function openExchangeModal() {
 }
 
 /* ========= settings tab ========= */
+/* ========= quick-jot (隨手記) tab ========= */
+const CATEGORY_KEYWORDS = {
+  "食物": ["早餐", "午餐", "晚餐", "宵夜", "點心", "咖啡", "飲料", "下午茶", "消夜", "便當", "小吃"],
+  "購物": ["紀念品", "伴手禮", "戰利品", "名產", "禮物", "戰績"],
+  "交通": ["車票", "計程車", "公車", "捷運", "高鐵", "火車", "油錢", "停車", "uber", "taxi", "機票"],
+  "景點": ["門票", "入場", "博物館", "樂園", "展覽"],
+  "住宿": ["飯店", "旅館", "住宿", "民宿"]
+};
+function guessCategory(name) {
+  for (const cat in CATEGORY_KEYWORDS) {
+    if (CATEGORY_KEYWORDS[cat].some(w => name.includes(w))) return cat;
+  }
+  return "其他";
+}
+
+function parseQuickLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const dateMatch = trimmed.match(/^([\d\/\-]{4,10})\s*(.*)$/);
+  if (!dateMatch || !dateMatch[2]) return { ok: false, raw: line, reason: "找不到日期或找不到品項" };
+  const digits = dateMatch[1].replace(/[\/\-]/g, "");
+  const rest = dateMatch[2];
+  let year, month, day;
+  if (digits.length === 8) {
+    year = parseInt(digits.slice(0, 4), 10); month = digits.slice(4, 6); day = digits.slice(6, 8);
+  } else if (digits.length === 7) {
+    year = parseInt(digits.slice(0, 3), 10) + 1911; month = digits.slice(3, 5); day = digits.slice(5, 7);
+  } else if (digits.length === 4) {
+    year = new Date().getFullYear(); month = digits.slice(0, 2); day = digits.slice(2, 4);
+  } else {
+    return { ok: false, raw: line, reason: "日期格式看不懂（支援 0913 / 2026/09/13 / 115/09/13）" };
+  }
+  month = parseInt(month, 10); day = parseInt(day, 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return { ok: false, raw: line, reason: "日期看起來不對" };
+  const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  const items = [];
+  const re = /([^\d]+?)\s*(\d+)/g;
+  let m;
+  while ((m = re.exec(rest)) !== null) {
+    const name = m[1].trim();
+    const amount = Number(m[2]);
+    if (name && amount) items.push({ name, amount });
+  }
+  if (!items.length) return { ok: false, raw: line, reason: "找不到品項或金額" };
+  return { ok: true, date: dateStr, items };
+}
+
+function parseQuickText(text) {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const candidates = [], fails = [];
+  lines.forEach(line => {
+    const r = parseQuickLine(line);
+    if (!r) return;
+    if (!r.ok) { fails.push({ source: "new", raw: line, reason: r.reason }); return; }
+    r.items.forEach(it => {
+      candidates.push({
+        key: "new:" + Math.random().toString(36).slice(2, 9),
+        source: "new", date: r.date, name: it.name, amount: it.amount,
+        category: guessCategory(it.name), checked: true
+      });
+    });
+  });
+  return { candidates, fails };
+}
+
+function renderQuicknote() {
+  const root = $("#tab-quicknote");
+  const dbCandidates = currentQuicknotes.filter(q => q.parseOk !== false).map(q => ({
+    key: "db:" + q.id, source: "db", dbId: q.id, date: q.date, name: q.name, amount: q.amount,
+    category: q.category, checked: qnDbChecked[q.id] !== false
+  }));
+  const dbFails = currentQuicknotes.filter(q => q.parseOk === false).map(q => ({ key: "dbf:" + q.id, source: "db", dbId: q.id, raw: q.rawLine, reason: q.reason || "格式看不懂" }));
+
+  const allCandidates = [...dbCandidates, ...qnCandidates];
+  const allFails = [...dbFails, ...qnFails];
+
+  let html = `
+    <div class="field">
+      <label>貼上或輸入隨手記文字，一行一個日期開頭，後面接品項＋金額（可以連續好幾筆），例如：<br>
+      0913 早餐 500 午餐300 晚餐600<br>0912 紀念品30</label>
+      <textarea id="qn-input" rows="5" placeholder="0913 早餐 500 午餐300 晚餐600
+0912 紀念品30
+0914 飲料60"></textarea>
+    </div>
+    <button class="btn btn-primary btn-block" id="qn-parse" style="margin-bottom:16px;">🔍 解析</button>
+  `;
+
+  if (allCandidates.length) {
+    html += `<div class="section-title" style="margin-top:0;">待確認項目（勾選要加入支出的）</div>`;
+    html += allCandidates.map(c => `
+      <div class="qn-candidate" data-key="${c.key}">
+        <input type="checkbox" ${c.checked !== false ? "checked" : ""}>
+        <div class="qn-main">
+          <div class="qn-name">${escapeHtml(c.name)}</div>
+          <div class="qn-meta">${escapeHtml(c.date)} · ${escapeHtml(c.category)}</div>
+        </div>
+        <div class="qn-amt">台幣 ${fmt(c.amount)}</div>
+      </div>`).join("");
+    html += `<button class="btn btn-primary btn-block" id="qn-confirm" style="margin-top:6px;">✅ 確認送出</button>`;
+  }
+
+  if (allFails.length) {
+    html += `<div class="section-title">無法辨識，需要手動處理</div>`;
+    html += allFails.map(f => `
+      <div class="qn-fail" data-key="${f.key}">
+        <div style="font-size:13px;color:var(--ink-soft);">⚠️ ${escapeHtml(f.reason)}</div>
+        <div class="raw">${escapeHtml(f.raw)}</div>
+        ${f.source === "db" ? `<button class="btn btn-sm btn-danger" style="margin-top:8px;" data-del-fail="${f.dbId}">刪除這行</button>` : ""}
+      </div>`).join("");
+  }
+
+  if (!allCandidates.length && !allFails.length) {
+    html += `<p style="font-size:13px;color:var(--muted);">目前沒有待確認的隨手記項目。</p>`;
+  }
+
+  root.innerHTML = html;
+
+  const parseBtn = root.querySelector("#qn-parse");
+  if (parseBtn) parseBtn.addEventListener("click", () => {
+    const text = root.querySelector("#qn-input").value;
+    const { candidates, fails } = parseQuickText(text);
+    qnCandidates = qnCandidates.concat(candidates);
+    qnFails = qnFails.concat(fails);
+    renderQuicknote();
+  });
+
+  root.querySelectorAll(".qn-candidate input[type=checkbox]").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const key = cb.closest(".qn-candidate").dataset.key;
+      if (key.startsWith("new:")) {
+        const found = qnCandidates.find(x => x.key === key);
+        if (found) found.checked = cb.checked;
+      } else if (key.startsWith("db:")) {
+        qnDbChecked[key.slice(3)] = cb.checked;
+      }
+    });
+  });
+
+  root.querySelectorAll("[data-del-fail]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      await quicknotesRef(currentTripId).doc(btn.dataset.delFail).delete();
+    });
+  });
+
+  const confirmBtn = root.querySelector("#qn-confirm");
+  if (confirmBtn) confirmBtn.addEventListener("click", () => commitQuicknotes(allCandidates));
+}
+
+async function commitQuicknotes(candidates) {
+  const batch = db.batch();
+  let addedCount = 0, keptCount = 0;
+  candidates.forEach(c => {
+    const checked = c.source === "new" ? (c.checked !== false) : (qnDbChecked[c.dbId] !== false);
+    if (checked) {
+      batch.set(expensesRef(currentTripId).doc(), {
+        date: c.date, category: c.category, name: c.name, currency: "TWD",
+        amount: c.amount, fee: 0, twd: c.amount, paymentMethod: "", payerId: null,
+        splitEven: true, note: "", quickAdd: true,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      addedCount++;
+      if (c.source === "db") batch.delete(quicknotesRef(currentTripId).doc(c.dbId));
+    } else {
+      keptCount++;
+      if (c.source === "new") {
+        batch.set(quicknotesRef(currentTripId).doc(), {
+          parseOk: true, date: c.date, name: c.name, amount: c.amount, category: c.category,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    }
+  });
+  qnFails.filter(f => f.source === "new").forEach(f => {
+    batch.set(quicknotesRef(currentTripId).doc(), {
+      parseOk: false, rawLine: f.raw, reason: f.reason,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    keptCount++;
+  });
+  await batch.commit();
+  qnCandidates = []; qnFails = []; qnDbChecked = {};
+  toast(`已新增 ${addedCount} 筆支出，${keptCount} 筆留在隨手記`);
+}
+
 function renderSettings() {
   const root = $("#tab-settings");
   const currencies = currentTrip.currencies || [];
