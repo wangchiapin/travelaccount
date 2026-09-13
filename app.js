@@ -96,8 +96,8 @@ function hashColor(str) {
   return RAMPS[Math.abs(h) % RAMPS.length];
 }
 function fmt(n) {
-  n = Math.round(n || 0);
-  return n.toLocaleString("zh-Hant");
+  n = Math.round((n || 0) * 100) / 100;
+  return n.toLocaleString("zh-Hant", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 function toast(msg) {
   const root = $("#toast-root");
@@ -111,7 +111,10 @@ function escapeHtml(s) {
 }
 function todayStr() {
   const d = new Date();
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 /* currency conversion: TWD is always the base currency (rate 1) */
@@ -272,11 +275,15 @@ function quicknotesRef(tripId) {
   return tripsRef().doc(tripId).collection("quicknotes");
 }
 
+let tripTotals = {};
 function listenTrips() {
   if (unsubTrips) unsubTrips();
   unsubTrips = tripsRef().orderBy("startDate", "desc").onSnapshot(snap => {
     trips = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if ($("#screen-trips").classList.contains("hidden") === false) renderTripsList();
+    if ($("#screen-trips").classList.contains("hidden") === false) {
+      renderTripsList();
+      refreshTripTotals().then(renderTripsList);
+    }
     if (!autoOpenedTrip) {
       autoOpenedTrip = true;
       try {
@@ -289,6 +296,17 @@ function listenTrips() {
   }, err => toast("讀取旅行清單失敗"));
 }
 
+async function refreshTripTotals() {
+  const results = await Promise.all(trips.map(t =>
+    expensesRef(t.id).get().then(snap => {
+      let sum = 0;
+      snap.forEach(d => { const e = d.data(); sum += (e.twd || 0) + (e.fee || 0); });
+      return { id: t.id, sum };
+    }).catch(() => ({ id: t.id, sum: null }))
+  ));
+  results.forEach(r => { tripTotals[r.id] = r.sum; });
+}
+
 function renderTripsList() {
   const root = $("#trips-list");
   if (trips.length === 0) {
@@ -296,12 +314,12 @@ function renderTripsList() {
     return;
   }
   root.innerHTML = trips.map(t => {
-    const total = t._cachedTotal != null ? t._cachedTotal : null;
+    const total = tripTotals[t.id] != null ? tripTotals[t.id] : null;
     return `
       <div class="trip-card" data-id="${t.id}">
         <h3>${escapeHtml(t.name)}</h3>
         <div class="dates">${escapeHtml(t.startDate || "")}${t.endDate ? " – " + escapeHtml(t.endDate) : ""}</div>
-        <div class="total"><span class="unit">台幣</span>${total == null ? "—" : fmt(total)}</div>
+        <div class="total"><span class="unit">台幣</span>${total == null ? "…" : fmt(total)}</div>
       </div>`;
   }).join("");
   $all(".trip-card").forEach(card => {
@@ -406,6 +424,7 @@ $("#btn-back-trips").addEventListener("click", () => {
   hide($("#screen-trip"));
   show($("#screen-trips"));
   renderTripsList();
+  refreshTripTotals().then(renderTripsList);
 });
 $("#btn-logout").addEventListener("click", () => auth.signOut());
 
@@ -824,12 +843,18 @@ function openExpenseModal(existing) {
 
   modal.querySelector("#f-save").addEventListener("click", async () => {
     const name = modal.querySelector("#f-name").value.trim();
-    const amount = Number(modal.querySelector("#f-amount").value);
+    const amountRaw = modal.querySelector("#f-amount").value;
+    const amount = Number(amountRaw);
     const fee = Number(modal.querySelector("#f-fee").value) || 0;
     const date = modal.querySelector("#f-date").value || todayStr();
     const currency = modal.querySelector("#f-currency").value;
     if (!name) { toast("請輸入名稱"); return; }
-    if (!amount) { toast("請輸入金額"); return; }
+    if (amountRaw.trim() === "" || isNaN(amount)) { toast("請輸入金額"); return; }
+    if (currency !== "TWD") {
+      const c = currencies.find(x => x.code === currency);
+      const rate = c ? Number(c.rate) || 0 : 0;
+      if (rate <= 0) { toast(`請先到設定中，將 ${currency} 的匯率設定為大於 0 的數值`); return; }
+    }
     const twd = toTwd(amount, currency, currentTrip);
     const payload = {
       date, category: state.category, name, currency, amount, fee, twd,
@@ -843,7 +868,7 @@ function openExpenseModal(existing) {
         .map(inp => ({ payerId: inp.dataset.splitPayer, amount: Number(inp.value) || 0 }))
         .filter(s => s.amount !== 0);
       const sum = splits.reduce((s, x) => s + x.amount, 0);
-      if (Math.abs(sum - (twd + fee)) >= 1) { toast("分配金額總和要等於總金額"); return; }
+      if (Math.abs(sum - (twd + fee)) >= 0.01) { toast("分配金額總和要等於總金額"); return; }
       payload.splits = splits;
       payload.payerId = null;
     } else {
@@ -963,9 +988,9 @@ function renderSettle() {
       const paid = paidByPerson[p.id] || 0;
       const rawBalance = paid - fairShare;
       const balance = rawBalance + (settledNet[p.id] || 0);
-      const rounded = Math.round(balance);
+      const rounded = Math.round(balance * 100) / 100;
       let badge;
-      if (Math.abs(rounded) < 1) badge = `<span class="settle-badge settle-even">打平</span>`;
+      if (Math.abs(rounded) < 0.01) badge = `<span class="settle-badge settle-even">打平</span>`;
       else if (rounded > 0) badge = `<span class="settle-badge settle-plus">從基金收 ${fmt(rounded)}</span>`;
       else badge = `<span class="settle-badge settle-minus">補基金 ${fmt(-rounded)}</span>`;
       const personal = personalTotals[p.id];
@@ -1039,7 +1064,9 @@ function renderSettle() {
       return `
         <div class="exchange-card" data-id="${s.id}">
           <div class="top"><span>${escapeHtml(from ? from.name : "?")} → ${escapeHtml(to ? to.name : "?")}</span><span>台幣 ${fmt(s.amount)}</span></div>
-          <div class="sub">${escapeHtml(s.date || "")}${s.note ? " · " + escapeHtml(s.note) : ""} <span style="color:var(--danger);cursor:pointer;" class="del-settlement">刪除</span></div>
+          <div class="sub">${escapeHtml(s.date || "")}${s.note ? " · " + escapeHtml(s.note) : ""}
+            <span style="color:var(--ink-soft);cursor:pointer;text-decoration:underline;" class="edit-settlement">編輯</span>
+            <span style="color:var(--danger);cursor:pointer;" class="del-settlement">刪除</span></div>
         </div>`;
     }).join("");
     logRoot.querySelectorAll(".del-settlement").forEach(btn => {
@@ -1047,6 +1074,13 @@ function renderSettle() {
         const id = e.target.closest(".exchange-card").dataset.id;
         if (!confirm("刪除這筆結清紀錄？")) return;
         await settlementsRef(currentTripId).doc(id).delete();
+      });
+    });
+    logRoot.querySelectorAll(".edit-settlement").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const id = e.target.closest(".exchange-card").dataset.id;
+        const s = currentSettlements.find(item => item.id === id);
+        if (s) openSettlementModal(participants, s);
       });
     });
   }
@@ -1123,26 +1157,28 @@ function openTaxRefundModal() {
   });
 }
 
-function openSettlementModal(participants) {
+function openSettlementModal(participants, existing) {
+  const isNew = !existing;
   const modal = document.createElement("div");
   modal.className = "modal-overlay";
   modal.innerHTML = `
     <div class="modal-sheet">
-      <div class="modal-head"><h2>記一筆已還款</h2><button class="icon-btn" id="m-close">✕</button></div>
-      <div class="field"><label>日期</label><input id="s-date" type="date" value="${todayStr()}"></div>
+      <div class="modal-head"><h2>${isNew ? "記一筆已還款" : "編輯已還款紀錄"}</h2><button class="icon-btn" id="m-close">✕</button></div>
+      <div class="field"><label>日期</label><input id="s-date" type="date" value="${existing ? existing.date : todayStr()}"></div>
       <div class="field"><label>誰付錢</label>
-        <div class="payer-row" id="s-from">${participants.map((p, i) => `<button type="button" data-id="${p.id}" class="${i === 0 ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}</div>
+        <div class="payer-row" id="s-from">${participants.map((p, i) => `<button type="button" data-id="${p.id}" class="${(existing ? existing.fromId === p.id : i === 0) ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}</div>
       </div>
       <div class="field"><label>付給誰</label>
-        <div class="payer-row" id="s-to">${participants.map((p, i) => `<button type="button" data-id="${p.id}" class="${i === 1 ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}</div>
+        <div class="payer-row" id="s-to">${participants.map((p, i) => `<button type="button" data-id="${p.id}" class="${(existing ? existing.toId === p.id : i === 1) ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}</div>
       </div>
-      <div class="field"><label>金額（台幣）</label><input id="s-amount" type="number" inputmode="decimal" placeholder="0"></div>
-      <div class="field"><label>備註</label><textarea id="s-note" rows="2" placeholder="選填，例如：LINE Pay 轉帳"></textarea></div>
-      <button class="btn btn-primary btn-block" id="s-save">儲存</button>
+      <div class="field"><label>金額（台幣）</label><input id="s-amount" type="number" inputmode="decimal" placeholder="0" value="${existing ? existing.amount : ""}"></div>
+      <div class="field"><label>備註</label><textarea id="s-note" rows="2" placeholder="選填，例如：LINE Pay 轉帳">${existing ? escapeHtml(existing.note || "") : ""}</textarea></div>
+      <button class="btn btn-primary btn-block" id="s-save" style="margin-bottom:10px;">${isNew ? "儲存" : "更新"}</button>
+      ${isNew ? "" : `<button class="btn btn-danger btn-block" id="s-delete">刪除這筆</button>`}
     </div>`;
   $("#modal-root").appendChild(modal);
-  let fromId = participants[0] ? participants[0].id : "";
-  let toId = participants[1] ? participants[1].id : "";
+  let fromId = existing ? existing.fromId : (participants[0] ? participants[0].id : "");
+  let toId = existing ? existing.toId : (participants[1] ? participants[1].id : "");
   modal.querySelector("#m-close").addEventListener("click", () => modal.remove());
   modal.querySelector("#s-from").addEventListener("click", e => {
     if (!e.target.dataset.id) return;
@@ -1158,15 +1194,29 @@ function openSettlementModal(participants) {
     const amount = Number(modal.querySelector("#s-amount").value) || 0;
     if (!amount) { toast("請輸入金額"); return; }
     if (fromId === toId) { toast("付錢的人跟收錢的人要不一樣"); return; }
-    await settlementsRef(currentTripId).add({
+    const payload = {
       date: modal.querySelector("#s-date").value || todayStr(),
       fromId, toId, amount,
-      note: modal.querySelector("#s-note").value.trim(),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+      note: modal.querySelector("#s-note").value.trim()
+    };
+    if (isNew) {
+      payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await settlementsRef(currentTripId).add(payload);
+      toast("已記錄");
+    } else {
+      await settlementsRef(currentTripId).doc(existing.id).update(payload);
+      toast("已更新");
+    }
     modal.remove();
-    toast("已記錄");
   });
+  if (!isNew) {
+    modal.querySelector("#s-delete").addEventListener("click", async () => {
+      if (!confirm("確定要刪除這筆結清紀錄嗎？")) return;
+      await settlementsRef(currentTripId).doc(existing.id).delete();
+      modal.remove();
+      toast("已刪除");
+    });
+  }
 }
 
 /* ========= exchange tab ========= */
@@ -1205,7 +1255,9 @@ function renderExchange() {
       return `
         <div class="exchange-card" data-id="${x.id}">
           <div class="top"><span>台幣 ${fmt(x.fromAmount)} → ${fmt(x.toAmount)} ${escapeHtml(x.toCurrency)}</span><span>匯率 ${rate.toFixed(4)}</span></div>
-          <div class="sub">${escapeHtml(x.date || "")}${p ? " · " + escapeHtml(p.name) + " 出的錢" : ""}${x.note ? " · " + escapeHtml(x.note) : ""} <span style="color:var(--danger);cursor:pointer;" class="del-exchange">刪除</span></div>
+          <div class="sub">${escapeHtml(x.date || "")}${p ? " · " + escapeHtml(p.name) + " 出的錢" : ""}${x.note ? " · " + escapeHtml(x.note) : ""}
+            <span style="color:var(--ink-soft);cursor:pointer;text-decoration:underline;" class="edit-exchange">編輯</span>
+            <span style="color:var(--danger);cursor:pointer;" class="del-exchange">刪除</span></div>
         </div>`;
     }).join("");
   }
@@ -1219,10 +1271,18 @@ function renderExchange() {
       await exchangesRef(currentTripId).doc(id).delete();
     });
   });
+  root.querySelectorAll(".edit-exchange").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const id = e.target.closest(".exchange-card").dataset.id;
+      const x = currentExchanges.find(item => item.id === id);
+      if (x) openExchangeModal(x);
+    });
+  });
   $("#btn-add-exchange").addEventListener("click", () => openExchangeModal());
 }
 
-function openExchangeModal() {
+function openExchangeModal(existing) {
+  const isNew = !existing;
   const participants = currentTrip.participants || DEFAULT_PARTICIPANTS;
   const currencies = (currentTrip.currencies || []).filter(c => c.code !== "TWD");
   if (!currencies.length) { toast("請先到設定新增外幣幣別"); return; }
@@ -1230,23 +1290,24 @@ function openExchangeModal() {
   modal.className = "modal-overlay";
   modal.innerHTML = `
     <div class="modal-sheet">
-      <div class="modal-head"><h2>新增換匯紀錄</h2><button class="icon-btn" id="m-close">✕</button></div>
-      <div class="field"><label>日期</label><input id="x-date" type="date" value="${todayStr()}"></div>
+      <div class="modal-head"><h2>${isNew ? "新增換匯紀錄" : "編輯換匯紀錄"}</h2><button class="icon-btn" id="m-close">✕</button></div>
+      <div class="field"><label>日期</label><input id="x-date" type="date" value="${existing ? existing.date : todayStr()}"></div>
       <div class="field"><label>誰出的台幣</label>
-        <div class="payer-row" id="x-payer">${participants.map((p, i) => `<button type="button" data-id="${p.id}" class="${i === 0 ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}</div>
+        <div class="payer-row" id="x-payer">${participants.map(p => `<button type="button" data-id="${p.id}" class="${(existing ? existing.payerId === p.id : p === participants[0]) ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}</div>
       </div>
-      <div class="field"><label>出多少台幣</label><input id="x-from" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>出多少台幣</label><input id="x-from" type="number" inputmode="decimal" placeholder="0" value="${existing ? existing.fromAmount : ""}"></div>
       <div class="field"><label>換成哪個幣別</label>
-        <select id="x-currency">${currencies.map(c => `<option value="${c.code}">${escapeHtml(c.code)}</option>`).join("")}</select>
+        <select id="x-currency">${currencies.map(c => `<option value="${c.code}"${existing && existing.toCurrency === c.code ? " selected" : ""}>${escapeHtml(c.code)}</option>`).join("")}</select>
       </div>
-      <div class="field"><label>匯率（1 外幣 = 多少台幣，這次實際換匯的匯率）</label><input id="x-rate" type="number" step="0.0001" inputmode="decimal" placeholder="例如 0.21"></div>
-      <div class="field"><label>換到多少外幣（會自動算，也可以手動改）</label><input id="x-to" type="number" inputmode="decimal" placeholder="0"></div>
-      <div class="field"><label>備註</label><textarea id="x-note" rows="2" placeholder="選填，例如：在哪裡換的"></textarea></div>
-      <button class="btn btn-primary btn-block" id="x-save">儲存</button>
+      <div class="field"><label>匯率（1 外幣 = 多少台幣，這次實際換匯的匯率）</label><input id="x-rate" type="number" step="0.0001" inputmode="decimal" placeholder="例如 0.21" value="${existing && existing.rate ? existing.rate : ""}"></div>
+      <div class="field"><label>換到多少外幣（會自動算，也可以手動改）</label><input id="x-to" type="number" inputmode="decimal" placeholder="0" value="${existing ? existing.toAmount : ""}"></div>
+      <div class="field"><label>備註</label><textarea id="x-note" rows="2" placeholder="選填，例如：在哪裡換的">${existing ? escapeHtml(existing.note || "") : ""}</textarea></div>
+      <button class="btn btn-primary btn-block" id="x-save" style="margin-bottom:10px;">${isNew ? "儲存" : "更新"}</button>
+      ${isNew ? "" : `<button class="btn btn-danger btn-block" id="x-delete">刪除這筆</button>`}
     </div>`;
   $("#modal-root").appendChild(modal);
-  let payerId = participants[0] ? participants[0].id : "";
-  let toTouched = false;
+  let payerId = existing ? existing.payerId : (participants[0] ? participants[0].id : "");
+  let toTouched = !isNew;
   function recalcTo() {
     if (toTouched) return;
     const from = Number(modal.querySelector("#x-from").value) || 0;
@@ -1267,16 +1328,30 @@ function openExchangeModal() {
     const toAmount = Number(modal.querySelector("#x-to").value) || 0;
     const rate = Number(modal.querySelector("#x-rate").value) || (toAmount ? fromAmount / toAmount : 0);
     if (!fromAmount || !toAmount) { toast("請輸入台幣與外幣金額"); return; }
-    await exchangesRef(currentTripId).add({
+    const payload = {
       date: modal.querySelector("#x-date").value || todayStr(),
       payerId, fromAmount, toAmount, rate,
       toCurrency: modal.querySelector("#x-currency").value,
-      note: modal.querySelector("#x-note").value.trim(),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+      note: modal.querySelector("#x-note").value.trim()
+    };
+    if (isNew) {
+      payload.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await exchangesRef(currentTripId).add(payload);
+      toast("已新增");
+    } else {
+      await exchangesRef(currentTripId).doc(existing.id).update(payload);
+      toast("已更新");
+    }
     modal.remove();
-    toast("已新增");
   });
+  if (!isNew) {
+    modal.querySelector("#x-delete").addEventListener("click", async () => {
+      if (!confirm("確定要刪除這筆換匯紀錄嗎？")) return;
+      await exchangesRef(currentTripId).doc(existing.id).delete();
+      modal.remove();
+      toast("已刪除");
+    });
+  }
 }
 
 /* ========= settings tab ========= */
@@ -1342,6 +1417,10 @@ function parseQuickLine(line) {
   }
   month = parseInt(month, 10); day = parseInt(day, 10);
   if (month < 1 || month > 12 || day < 1 || day > 31) return { ok: false, raw: line, reason: "日期看起來不對" };
+  const checkDate = new Date(year, month - 1, day);
+  if (checkDate.getFullYear() !== year || checkDate.getMonth() !== month - 1 || checkDate.getDate() !== day) {
+    return { ok: false, raw: line, reason: "日期不存在（例如 2/31）" };
+  }
   const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
   let currency = "TWD";
@@ -1352,7 +1431,7 @@ function parseQuickLine(line) {
   if (payHit) { paymentMethod = payHit; rest = rest.replace(payHit, " "); }
 
   const items = [];
-  const re = /([^\d]+?)\s*(\d+)/g;
+  const re = /([^\d]+?)\s*(\d+(?:\.\d+)?)/g;
   let m;
   while ((m = re.exec(rest)) !== null) {
     const name = m[1].trim();
