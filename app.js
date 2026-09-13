@@ -80,6 +80,7 @@ let currentTab = "ledger";
 let ledgerFilters = { payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" };
 let filterPanelOpen = false;
 let pendingLedgerScroll = false;
+let autoOpenedTrip = false;
 let qnCandidates = [];
 let qnFails = [];
 let qnDbChecked = {};
@@ -186,6 +187,7 @@ function listenUserProfile() {
 
 function listenHousehold() {
   if (unsubHouseholdDoc) unsubHouseholdDoc();
+  autoOpenedTrip = false;
   unsubHouseholdDoc = db.collection("households").doc(currentHouseholdId).onSnapshot(doc => {
     if (!doc.exists) return;
     currentHousehold = { id: doc.id, ...doc.data() };
@@ -275,6 +277,15 @@ function listenTrips() {
   unsubTrips = tripsRef().orderBy("startDate", "desc").onSnapshot(snap => {
     trips = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if ($("#screen-trips").classList.contains("hidden") === false) renderTripsList();
+    if (!autoOpenedTrip) {
+      autoOpenedTrip = true;
+      try {
+        const lastId = localStorage.getItem("lastTripId_" + currentHouseholdId);
+        if (lastId && trips.some(t => t.id === lastId) && !currentTripId) {
+          openTrip(lastId);
+        }
+      } catch (e) { /* localStorage unavailable, ignore */ }
+    }
   }, err => toast("讀取旅行清單失敗"));
 }
 
@@ -344,6 +355,7 @@ function openTripEditModal(trip) {
 /* ========= open a trip ========= */
 function openTrip(id) {
   currentTripId = id;
+  try { localStorage.setItem("lastTripId_" + currentHouseholdId, id); } catch (e) { /* ignore */ }
   currentTab = "ledger";
   ledgerFilters = { payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" };
   filterPanelOpen = false;
@@ -603,6 +615,7 @@ function openExpenseModal(existing) {
   const currencies = currentTrip.currencies || [{ code: "TWD", name: "台幣", rate: 1 }];
   const participants = currentTrip.participants || DEFAULT_PARTICIPANTS;
   const methods = currentTrip.paymentMethods || DEFAULT_PAYMENT_METHODS;
+  const defaultPayer = participants.find(p => p.name === "老婆") || participants[0];
 
   let state = {
     date: existing ? existing.date : (currentExpenses[0] ? currentExpenses[0].date : todayStr()),
@@ -612,7 +625,7 @@ function openExpenseModal(existing) {
     amount: existing ? existing.amount : "",
     fee: existing ? existing.fee || "" : "",
     paymentMethod: existing ? (existing.paymentMethod || "") : "",
-    payerId: existing ? existing.payerId : participants[0].id,
+    payerId: existing ? existing.payerId : (defaultPayer ? defaultPayer.id : null),
     splitEven: existing ? existing.splitEven !== false : true,
     note: existing ? existing.note || "" : "",
     taxRefundable: existing ? !!existing.taxRefundable : false,
