@@ -6,28 +6,28 @@
 <title>旅費帳本</title>
 <style>
   :root{
-    --cream:#F5F0E4;
-    --paper:#FBF8F0;
-    --ink:#2B2620;
-    --ink-soft:#5C5344;
-    --muted:#948B78;
-    --border:#E4DBC5;
-    --brick:#A8432E;
-    --brick-dark:#7A2F20;
-    --brick-tint:#F3E1DA;
-    --jade:#2F6E52;
-    --jade-dark:#1F4E3A;
-    --jade-tint:#DFEBE3;
-    --gold:#C08A22;
-    --gold-tint:#F3E7CC;
-    --danger:#B23B3B;
-    --radius:12px;
-    --shadow:0 2px 10px rgba(43,38,32,0.08);
+    --cream:#FFF5F8;
+    --paper:#FFFFFF;
+    --ink:#6B5560;
+    --ink-soft:#9A7F8C;
+    --muted:#C7AFBB;
+    --border:#F6DCE6;
+    --brick:#FF9DBB;
+    --brick-dark:#E06A93;
+    --brick-tint:#FFE6EF;
+    --jade:#7FD8BE;
+    --jade-dark:#3FA98A;
+    --jade-tint:#E1F8F0;
+    --gold:#FFC257;
+    --gold-tint:#FFF2D9;
+    --danger:#F5716F;
+    --radius:18px;
+    --shadow:0 4px 14px rgba(230,120,160,0.12);
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
   body{
-    font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Maru Gothic ProN","Hiragino Sans","PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
     background:var(--cream);
     color:var(--ink);
     min-height:100vh;
@@ -50,9 +50,10 @@
     position:sticky;top:0;z-index:20;
   }
   .stamp{
-    width:34px;height:34px;border-radius:6px;background:var(--brick);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;
-    flex-shrink:0;transform:rotate(-4deg);letter-spacing:1px;
+    width:34px;height:34px;border-radius:50%;color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:500;
+    flex-shrink:0;background:linear-gradient(135deg,var(--brick),var(--gold));
+    box-shadow:0 2px 6px rgba(230,120,160,0.35);
   }
   .topbar-title{flex:1;min-width:0;}
   .topbar-title h1{font-size:17px;font-weight:500;margin:0;}
@@ -68,14 +69,14 @@
   /* buttons */
   .btn{
     display:flex;align-items:center;justify-content:center;gap:6px;
-    height:44px;border-radius:8px;border:1px solid var(--border);
+    height:44px;border-radius:22px;border:1px solid var(--border);
     background:var(--paper);color:var(--ink);font-size:15px;font-weight:500;
   }
   .btn:active{transform:scale(0.98);}
-  .btn-primary{background:var(--jade);border-color:var(--jade);color:#fff;}
+  .btn-primary{background:var(--brick);border-color:var(--brick);color:#fff;box-shadow:0 3px 8px rgba(230,120,160,0.3);}
   .btn-danger{color:var(--danger);border-color:var(--danger);background:var(--paper);}
   .btn-block{width:100%;}
-  .btn-sm{height:34px;font-size:13px;padding:0 12px;}
+  .btn-sm{height:34px;font-size:13px;padding:0 12px;border-radius:18px;}
 
   /* screens */
   .screen{padding:16px 18px 24px;}
@@ -95,11 +96,11 @@
   /* tabs */
   .tabbar{
     display:flex;gap:4px;background:var(--paper);border:1px solid var(--border);
-    border-radius:10px;padding:4px;margin-bottom:16px;
+    border-radius:16px;padding:4px;margin-bottom:16px;overflow-x:auto;
   }
   .tabbar button{
-    flex:1;background:none;border:none;height:36px;border-radius:7px;font-size:13px;
-    color:var(--ink-soft);
+    flex:1 0 auto;background:none;border:none;height:36px;border-radius:13px;font-size:11.5px;
+    color:var(--ink-soft);white-space:nowrap;padding:0 6px;
   }
   .tabbar button.active{background:var(--jade);color:#fff;font-weight:500;}
 
@@ -168,14 +169,14 @@
     font-size:13px;padding:7px 14px;border-radius:20px;border:1px solid var(--border);
     background:var(--paper);color:var(--ink-soft);
   }
-  .chip.active{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .chip.active{background:var(--brick);border-color:var(--brick);color:#fff;}
   .amount-row{display:flex;gap:8px;}
   .amount-row select{width:92px;flex-shrink:0;}
   .amount-row input{flex:1;text-align:right;}
   .convert-hint{font-size:12px;color:var(--muted);text-align:right;margin-top:6px;}
   .payer-row{display:flex;gap:8px;flex-wrap:wrap;}
   .payer-row button{flex:1;min-width:80px;height:40px;border-radius:8px;border:1px solid var(--border);background:var(--paper);font-size:14px;}
-  .payer-row button.active{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .payer-row button.active{background:var(--brick);border-color:var(--brick);color:#fff;}
   .switch-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0;}
   .switch{width:40px;height:24px;border-radius:20px;background:var(--border);position:relative;border:none;padding:0;flex-shrink:0;}
   .switch.on{background:var(--jade);}
@@ -224,6 +225,32 @@
   .ledger-scroll{overflow-y:auto;}
   .subtotal-bar.always{background:var(--paper);color:var(--ink);border:1px solid var(--border);}
   .fx-input{width:110px;text-align:right;}
+
+  .entry.quick-pending{background:var(--brick-tint);border-radius:12px;margin:0 -6px;padding:10px 6px;}
+
+  .qn-candidate{
+    display:flex;align-items:flex-start;gap:10px;background:var(--paper);
+    border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:8px;
+  }
+  .qn-candidate input[type="checkbox"]{width:20px;height:20px;flex-shrink:0;margin-top:2px;accent-color:var(--brick);}
+  .qn-candidate .qn-main{flex:1;min-width:0;}
+  .qn-candidate .qn-name{font-size:14px;}
+  .qn-candidate .qn-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+  .qn-candidate .qn-amt{font-size:14px;font-weight:500;white-space:nowrap;}
+  .qn-fail{
+    background:var(--gold-tint);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px;margin-bottom:8px;
+  }
+  .qn-fail .raw{font-size:13px;font-family:monospace;background:var(--paper);padding:6px 8px;border-radius:8px;margin-top:6px;white-space:pre-wrap;}
+
+  .cheer-popup{
+    position:fixed;top:40%;left:50%;transform:translate(-50%,-50%) scale(0.9);
+    background:var(--paper);border:2px solid var(--brick-tint);color:var(--ink);
+    padding:16px 26px;border-radius:24px;font-size:16px;font-weight:500;
+    box-shadow:0 8px 24px rgba(230,120,160,0.25);z-index:120;text-align:center;
+    opacity:0;transition:opacity .25s ease, transform .25s ease;
+  }
+  .cheer-popup.show{opacity:1;transform:translate(-50%,-50%) scale(1);}
 </style>
 </head>
 <body>
@@ -232,7 +259,7 @@
   <!-- LOGIN -->
   <div id="screen-login" class="screen hidden">
     <div style="text-align:center;padding:60px 0 30px;">
-      <div class="stamp" style="width:52px;height:52px;font-size:18px;margin:0 auto 14px;">帳</div>
+      <div class="stamp" style="width:52px;height:52px;font-size:24px;margin:0 auto 14px;">🎀</div>
       <h1 style="font-size:19px;font-weight:500;margin:0;">旅費帳本</h1>
       <p style="font-size:13px;color:var(--muted);margin:6px 0 0;">一起記，一起算</p>
     </div>
@@ -246,7 +273,7 @@
   <!-- HOUSEHOLD SETUP -->
   <div id="screen-household" class="screen hidden">
     <div style="text-align:center;padding:40px 0 24px;">
-      <div class="stamp" style="width:52px;height:52px;font-size:18px;margin:0 auto 14px;">家</div>
+      <div class="stamp" style="width:52px;height:52px;font-size:24px;margin:0 auto 14px;">🏠</div>
       <h1 style="font-size:19px;font-weight:500;margin:0;">建立或加入家庭帳本</h1>
       <p style="font-size:13px;color:var(--muted);margin:6px 0 0;">兩人要用同一套帳本，其中一人先建立，再把邀請碼給另一人加入</p>
     </div>
@@ -262,7 +289,7 @@
   <!-- TRIP LIST -->
   <div id="screen-trips" class="screen hidden" style="padding-top:0;">
     <div class="topbar" style="margin:0 -18px 18px;">
-      <div class="stamp">帳</div>
+      <div class="stamp">🎀</div>
       <div class="topbar-title"><h1 id="household-title">旅費帳本</h1></div>
       <button class="icon-btn" id="btn-invite" title="邀請碼">👥</button>
       <button class="icon-btn" id="btn-logout" title="登出">⏻</button>
@@ -281,22 +308,25 @@
       <div style="width:36px;"></div>
     </div>
     <div class="tabbar">
-      <button data-tab="ledger" class="active">帳本</button>
-      <button data-tab="settle">結算</button>
-      <button data-tab="exchange">換匯</button>
-      <button data-tab="settings">設定</button>
+      <button data-tab="ledger" class="active">📒 帳本</button>
+      <button data-tab="settle">🧮 結算</button>
+      <button data-tab="exchange">💱 換匯</button>
+      <button data-tab="quicknote">📝 隨手記</button>
+      <button data-tab="settings">⚙️ 設定</button>
     </div>
     <div id="tab-ledger"></div>
     <div id="tab-settle" class="hidden"></div>
     <div id="tab-exchange" class="hidden"></div>
+    <div id="tab-quicknote" class="hidden"></div>
     <div id="tab-settings" class="hidden"></div>
-    <button class="btn btn-primary fab" id="btn-add-expense">＋ 新增一筆</button>
+    <button class="btn btn-primary fab" id="btn-add-expense">🌸 新增一筆</button>
   </div>
 
 </div>
 
 <div id="modal-root"></div>
 <div id="toast-root"></div>
+<div id="cheer-root"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
