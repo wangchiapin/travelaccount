@@ -989,18 +989,37 @@ function renderSettle() {
       const rawBalance = paid - fairShare;
       const balance = rawBalance + (settledNet[p.id] || 0);
       const rounded = Math.round(balance * 100) / 100;
-      let badge;
-      if (Math.abs(rounded) < 0.01) badge = `<span class="settle-badge settle-even">打平</span>`;
-      else if (rounded > 0) badge = `<span class="settle-badge settle-plus">從基金收 ${fmt(rounded)}</span>`;
-      else badge = `<span class="settle-badge settle-minus">補基金 ${fmt(-rounded)}</span>`;
+      const n = participants.length;
+      const fundMultiplier = n > 1 ? n / (n - 1) : 1;
+      const fundAmt = Math.round(rounded * fundMultiplier * 100) / 100;
+      let directBadge, fundBadge;
+      if (Math.abs(rounded) < 0.01) {
+        directBadge = `<span class="settle-badge settle-even">打平</span>`;
+        fundBadge = `<span class="settle-badge settle-even">打平</span>`;
+      } else if (rounded > 0) {
+        directBadge = `<span class="settle-badge settle-plus">跟對方拿 ${fmt(rounded)}</span>`;
+        fundBadge = `<span class="settle-badge settle-plus">可從基金領 ${fmt(fundAmt)}</span>`;
+      } else {
+        directBadge = `<span class="settle-badge settle-minus">給對方 ${fmt(-rounded)}</span>`;
+        fundBadge = `<span class="settle-badge settle-even">不用處理</span>`;
+      }
       const personal = personalTotals[p.id];
       return `
-        <div class="person-row">
+        <div class="person-row" style="flex-direction:column;align-items:stretch;gap:10px;">
           <div>
             <div class="name">${escapeHtml(p.name)}</div>
             <div class="paid">均分已付 ${fmt(paid)}${personal ? `　個人花費 ${fmt(personal)}` : ""}</div>
           </div>
-          ${badge}
+          <div style="display:flex;gap:8px;">
+            <div style="flex:1;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">直接互轉</div>
+              ${directBadge}
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">從共同基金領</div>
+              ${fundBadge}
+            </div>
+          </div>
         </div>`;
     }).join("")}
 
