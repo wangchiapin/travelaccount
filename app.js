@@ -511,14 +511,17 @@ function renderLedger() {
   const filtered = applyLedgerFilters(currentExpenses);
   const hasFilters = JSON.stringify(ledgerFilters) !== JSON.stringify({ payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" });
 
-  let html = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
-    <button class="btn btn-sm" id="btn-toggle-filter">🔍 篩選${hasFilters ? "（篩選中）" : ""}</button>
-  </div>`;
-  if (filterPanelOpen) html += filterPanelHtml();
-
   const subtotalList = hasFilters ? filtered : currentExpenses;
   const subtotal = subtotalList.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
-  html += `<div class="subtotal-bar always"><span>${hasFilters ? `符合條件 ${filtered.length} 筆` : "旅遊支出總計"}</span><span class="n">台幣 ${fmt(subtotal)}</span></div>`;
+
+  let html = `<div class="ledger-header-row">
+    <button class="btn btn-sm" id="btn-toggle-filter">🔍 篩選${hasFilters ? "（篩選中）" : ""}</button>
+    <div class="ledger-total">
+      <span class="ledger-total-label">${hasFilters ? `符合條件 ${filtered.length} 筆` : "旅遊支出總計"}</span>
+      <span class="ledger-total-amount">台幣 ${fmt(subtotal)}</span>
+    </div>
+  </div>`;
+  if (filterPanelOpen) html += filterPanelHtml();
 
   if (filtered.length === 0) {
     html += `<div class="empty"><p>${currentExpenses.length === 0 ? "這趟旅行還沒有花費紀錄。<br>按下方「新增一筆」開始記帳。" : "沒有符合篩選條件的紀錄。"}</p></div>`;
@@ -680,7 +683,7 @@ function openExpenseModal(existing) {
         <div class="convert-hint" id="f-convert-hint"></div>
       </div>
 
-      <div class="field"><label>手續費（台幣，選填）</label><input id="f-fee" type="number" inputmode="decimal" placeholder="0" value="${state.fee}"></div>
+      <div class="field"><label>手續費（台幣）</label><input id="f-fee" type="number" inputmode="decimal" placeholder="0" value="${state.fee}"></div>
 
       <div class="field"><label>付款方式</label>
         <div class="chip-row" id="f-methods">
@@ -705,7 +708,7 @@ function openExpenseModal(existing) {
       </div>
 
       <div class="field" id="f-split-wrap"${state.multiPayer ? "" : " style=\"display:none;\""}>
-        <label>各自付多少（台幣，需等於總金額）</label>
+        <label>各自付多少（台幣）</label>
         <div id="f-split-rows">
           ${participants.map((p, i) => `
             <div class="split-row">
@@ -998,7 +1001,7 @@ function renderSettle() {
         fundBadge = `<span class="settle-badge settle-even">打平</span>`;
       } else if (rounded > 0) {
         directBadge = `<span class="settle-badge settle-plus">跟對方拿 ${fmt(rounded)}</span>`;
-        fundBadge = `<span class="settle-badge settle-plus">可從基金領 ${fmt(fundAmt)}</span>`;
+        fundBadge = `<span class="settle-badge settle-plus">可從基金拿 ${fmt(fundAmt)}</span>`;
       } else {
         directBadge = `<span class="settle-badge settle-minus">給對方 ${fmt(-rounded)}</span>`;
         fundBadge = `<span class="settle-badge settle-even">不用處理</span>`;
@@ -1016,7 +1019,7 @@ function renderSettle() {
               ${directBadge}
             </div>
             <div style="flex:1;">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">從共同基金領</div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">從共同基金拿</div>
               ${fundBadge}
             </div>
           </div>
