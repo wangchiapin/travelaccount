@@ -21,6 +21,13 @@ const DEFAULT_PARTICIPANTS = [
   { id: "husband", name: "老公" },
   { id: "wife", name: "老婆" }
 ];
+const FUND_ID = "FUND";
+const FUND_NAME = "共同基金";
+function payerDisplayName(id) {
+  if (id === FUND_ID) return FUND_NAME;
+  const p = (currentTrip && currentTrip.participants || []).find(x => x.id === id);
+  return p ? p.name : "";
+}
 const RAMPS = [
   { bg: "var(--brick-tint)", fg: "var(--brick-dark)" },
   { bg: "var(--jade-tint)", fg: "var(--jade-dark)" },
@@ -481,6 +488,7 @@ function filterPanelHtml() {
         <div class="chip-row">
           <button type="button" class="chip${f.payerId === "" ? " active" : ""}" data-payer="">全部</button>
           ${participants.map(p => `<button type="button" class="chip${f.payerId === p.id ? " active" : ""}" data-payer="${p.id}">${escapeHtml(p.name)}</button>`).join("")}
+          <button type="button" class="chip${f.payerId === FUND_ID ? " active" : ""}" data-payer="${FUND_ID}">${FUND_NAME}</button>
         </div>
       </div>
       <div class="filter-row"><label>是否分攤</label>
@@ -511,14 +519,17 @@ function renderLedger() {
   const filtered = applyLedgerFilters(currentExpenses);
   const hasFilters = JSON.stringify(ledgerFilters) !== JSON.stringify({ payerId: "", splitEven: "", currency: "", from: "", to: "", min: "", max: "", text: "" });
 
-  let html = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
-    <button class="btn btn-sm" id="btn-toggle-filter">🔍 篩選${hasFilters ? "（篩選中）" : ""}</button>
-  </div>`;
-  if (filterPanelOpen) html += filterPanelHtml();
-
   const subtotalList = hasFilters ? filtered : currentExpenses;
   const subtotal = subtotalList.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
-  html += `<div class="subtotal-bar always"><span>${hasFilters ? `符合條件 ${filtered.length} 筆` : "旅遊支出總計"}</span><span class="n">台幣 ${fmt(subtotal)}</span></div>`;
+
+  let html = `<div class="ledger-header-row">
+    <button class="btn btn-sm" id="btn-toggle-filter">🔍 篩選${hasFilters ? "（篩選中）" : ""}</button>
+    <div class="ledger-total">
+      <span class="ledger-total-label">${hasFilters ? `符合條件 ${filtered.length} 筆` : "旅遊支出總計"}</span>
+      <span class="ledger-total-amount">台幣 ${fmt(subtotal)}</span>
+    </div>
+  </div>`;
+  if (filterPanelOpen) html += filterPanelHtml();
 
   if (filtered.length === 0) {
     html += `<div class="empty"><p>${currentExpenses.length === 0 ? "這趟旅行還沒有花費紀錄。<br>按下方「新增一筆」開始記帳。" : "沒有符合篩選條件的紀錄。"}</p></div>`;
@@ -601,14 +612,14 @@ function entryRow(e) {
   let sideHtml;
   if (e.splits && e.splits.length) {
     sideHtml = e.splits.map(s => {
-      const p = (currentTrip.participants || []).find(x => x.id === s.payerId);
+      const name = payerDisplayName(s.payerId);
       const col = hashColor(s.payerId);
-      return `<span class="badge" style="background:${col.bg};color:${col.fg};">${escapeHtml(p ? p.name : "?")} ${fmt(s.amount)}</span>`;
+      return `<span class="badge" style="background:${col.bg};color:${col.fg};">${escapeHtml(name || "?")} ${fmt(s.amount)}</span>`;
     }).join(" ");
   } else {
-    const payer = (currentTrip.participants || []).find(p => p.id === e.payerId);
-    const payerColor = hashColor(payer ? payer.id : "?");
-    sideHtml = payer ? `<span class="badge" style="background:${payerColor.bg};color:${payerColor.fg};">${escapeHtml(payer.name)}</span>` : "";
+    const name = payerDisplayName(e.payerId);
+    const payerColor = hashColor(e.payerId || "?");
+    sideHtml = name ? `<span class="badge" style="background:${payerColor.bg};color:${payerColor.fg};">${escapeHtml(name)}</span>` : "";
   }
   return `
     <div class="entry${needsReview ? " quick-pending" : ""}" data-id="${e.id}">
@@ -701,6 +712,7 @@ function openExpenseModal(existing) {
         <label>支出人</label>
         <div class="payer-row" id="f-payers">
           ${participants.map(p => `<button type="button" data-payer="${p.id}" class="${p.id === state.payerId ? "active" : ""}">${escapeHtml(p.name)}</button>`).join("")}
+          <button type="button" data-payer="${FUND_ID}" class="${state.payerId === FUND_ID ? "active" : ""}">${FUND_NAME}</button>
         </div>
       </div>
 
@@ -907,7 +919,8 @@ function renderSettle() {
   const foreignCurrencies = (currentTrip.currencies || []).filter(c => c.code !== "TWD");
   const shared = currentExpenses.filter(e => e.splitEven !== false);
   const total = shared.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
-  const fairShare = participants.length ? total / participants.length : 0;
+  const fundDirectTotal = shared.filter(e => e.payerId === FUND_ID).reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
+  const fairShare = participants.length ? (total - fundDirectTotal) / participants.length : 0;
 
   // --- row 1: overall spend breakdown ---
   const grandTotalTwd = currentExpenses.reduce((s, e) => s + (e.twd || 0) + (e.fee || 0), 0);
@@ -982,8 +995,10 @@ function renderSettle() {
     <div class="section-title">均分結算</div>
     <div class="metric-grid">
       <div class="metric-card"><div class="lbl">列入均分總額</div><div class="val">${fmt(total)}</div></div>
+      ${fundDirectTotal ? `<div class="metric-card"><div class="lbl">其中共同基金直接支出</div><div class="val">${fmt(fundDirectTotal)}</div></div>` : ""}
       <div class="metric-card"><div class="lbl">每人應付（${participants.length} 人）</div><div class="val">${fmt(fairShare)}</div></div>
     </div>
+    ${fundDirectTotal ? `<p style="font-size:12px;color:var(--muted);margin:-4px 0 10px;">共同基金直接支出的部分已經算兩人共同出資，不需要再互轉或提領，因此已從每人應付金額中扣除。</p>` : ""}
     ${participants.map(p => {
       const paid = paidByPerson[p.id] || 0;
       const rawBalance = paid - fairShare;
@@ -1740,13 +1755,9 @@ function renderSettings() {
     const expRows = currentExpenses.map(e => {
       let payerName = "", splitDetail = "";
       if (e.splits && e.splits.length) {
-        splitDetail = e.splits.map(s => {
-          const p = (currentTrip.participants || []).find(x => x.id === s.payerId);
-          return `${p ? p.name : s.payerId}:${s.amount}`;
-        }).join(";");
+        splitDetail = e.splits.map(s => `${payerDisplayName(s.payerId) || s.payerId}:${s.amount}`).join(";");
       } else {
-        const p = (currentTrip.participants || []).find(x => x.id === e.payerId);
-        payerName = p ? p.name : "";
+        payerName = payerDisplayName(e.payerId);
       }
       return {
         日期: e.date, 類別: e.category, 名稱: e.name, 幣別: e.currency,
@@ -1786,6 +1797,7 @@ function renderSettings() {
       function ensureParticipant(name) {
         name = (name || "").trim();
         if (!name) return null;
+        if (name === FUND_NAME) return FUND_ID;
         let p = newParticipants.find(x => x.name === name);
         if (!p) { p = { id: "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6), name }; newParticipants.push(p); }
         return p.id;
