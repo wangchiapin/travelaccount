@@ -240,7 +240,7 @@ $("#btn-join-household").addEventListener("click", async () => {
 });
 $("#btn-household-logout").addEventListener("click", () => auth.signOut());
 
-$("#btn-invite").addEventListener("click", () => {
+function openInviteModal() {
   const modal = document.createElement("div");
   modal.className = "modal-overlay";
   modal.innerHTML = `
@@ -263,7 +263,9 @@ $("#btn-invite").addEventListener("click", () => {
       toast("請手動複製");
     }
   });
-});
+}
+$("#btn-invite").addEventListener("click", openInviteModal);
+
 
 /* ========= trips collection (shared per household) ========= */
 function tripsRef() {
@@ -1626,6 +1628,9 @@ function renderSettings() {
     <div class="section-title">旅行資訊</div>
     <div class="list-row"><span>${escapeHtml(currentTrip.name)}</span><button class="btn btn-sm" id="s-edit-trip">編輯</button></div>
 
+    <div class="section-title">家庭帳本</div>
+    <button class="btn btn-sm" id="s-invite">👥 邀請另一半（複製邀請碼）</button>
+
     <div class="section-title">幣別與匯率</div>
     <div id="s-currencies"></div>
     <button class="btn btn-sm" id="s-add-currency" style="margin-top:8px;">＋ 新增幣別</button>
@@ -1748,6 +1753,7 @@ function renderSettings() {
   });
 
   $("#s-edit-trip").addEventListener("click", () => openTripEditModal(currentTrip));
+  $("#s-invite").addEventListener("click", openInviteModal);
 
   $("#s-export").addEventListener("click", () => {
     const wb = XLSX.utils.book_new();
