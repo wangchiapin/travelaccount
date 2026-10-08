@@ -12,18 +12,61 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // 生活帳本：只有本人能讀寫自己的帳本
+    // Each signed-in user can only read/write their own ledger document.
     match /ledgers/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
-
-    // 旅費帳本：使用者設定
-    match /travelUsers/{uid} {
+    // Each signed-in user can only read/write their own schedule document.
+    match /schedules/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Each signed-in user can only read/write their own student records document.
+    match /studentRecords/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Each signed-in user can only read/write their own 每日上課收入 document.
+    match /dailyIncome/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Each signed-in user can only read/write their own 實際收入紀錄 document.
+    match /actualRecords/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Each signed-in user can only read/write their own 財務資產 document.
+    match /financeAssets/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Each signed-in user can only read/write their own 股票投資紀錄 document.
+    match /stockAssets/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // 旅費帳本：家庭帳本（以邀請碼＝文件 ID 加入）
+    // 課程行事曆：每個使用者只能讀寫自己底下的課程範本、學生、擋期行程
+    match /users/{uid}/courseEvents/{eventId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{uid}/students/{studentId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{uid}/blockEvents/{blockId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // TimeTree 課表：由 GitHub Actions 用管理員金鑰寫入，網頁只能讀
+    match /users/{uid}/ttSync/{docId} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+    }
+    // 網頁上的「請假／沒上課有付錢」標記
+    match /users/{uid}/ttMarks/{markId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // ===== 旅費帳本（travelaccount）=====
+    // 使用者設定
+    match /travelUsers/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // 家庭帳本（以邀請碼＝文件 ID 加入）
     match /travelHouseholds/{hid} {
       allow get: if request.auth != null;
       allow create: if request.auth != null
