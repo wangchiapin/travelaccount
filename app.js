@@ -1,14 +1,15 @@
-/* ========= Firebase config ========= */
-/* 建立你自己的 Firebase 專案（Firestore + Email/Password 登入）後，
-   到「專案設定」複製 firebaseConfig 貼在這裡取代下面的值 */
+/* ========= Firebase config =========
+   使用 Firebase 專案：moneybook-50481（與生活帳本共用專案，資料互相獨立）
+   本 app 的 collection 一律加 travel 前綴（travelUsers / travelHouseholds），
+   避免和生活帳本的 ledgers 混在一起。Firestore 規則請見 README。 */
 const firebaseConfig = {
-  apiKey: "AIzaSyAn7hS0kKHB9gz5mOa-Ywlifz-N630OjYc",
-  authDomain: "travelaccount-1b4a7.firebaseapp.com",
-  projectId: "travelaccount-1b4a7",
-  storageBucket: "travelaccount-1b4a7.firebasestorage.app",
-  messagingSenderId: "752586347313",
-  appId: "1:752586347313:web:69a937a4721f220a591610",
-  measurementId: "G-F3KER8RD42"
+  apiKey: "AIzaSyDB6zYAHvi0oTkObv-qDnP6nn0UUnscby0",
+  authDomain: "moneybook-50481.firebaseapp.com",
+  projectId: "moneybook-50481",
+  storageBucket: "moneybook-50481.firebasestorage.app",
+  messagingSenderId: "549256761796",
+  appId: "1:549256761796:web:254332f109e7b8ad871491",
+  measurementId: "G-XTDYYS4HK6"
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -182,7 +183,7 @@ auth.onAuthStateChanged(user => {
 });
 
 function listenUserProfile() {
-  unsubUserProfile = db.collection("users").doc(currentUser.uid).onSnapshot(doc => {
+  unsubUserProfile = db.collection("travelUsers").doc(currentUser.uid).onSnapshot(doc => {
     const data = doc.data();
     if (data && data.householdId) {
       currentHouseholdId = data.householdId;
@@ -198,7 +199,7 @@ function listenUserProfile() {
 function listenHousehold() {
   if (unsubHouseholdDoc) unsubHouseholdDoc();
   autoOpenedTrip = false;
-  unsubHouseholdDoc = db.collection("households").doc(currentHouseholdId).onSnapshot(doc => {
+  unsubHouseholdDoc = db.collection("travelHouseholds").doc(currentHouseholdId).onSnapshot(doc => {
     if (!doc.exists) return;
     currentHousehold = { id: doc.id, ...doc.data() };
     $("#household-title").textContent = currentHousehold.name || "旅費帳本";
@@ -214,11 +215,11 @@ $("#btn-create-household").addEventListener("click", async () => {
   $("#household-error").textContent = "";
   if (!name) { $("#household-error").textContent = "請輸入家庭帳本名稱"; return; }
   try {
-    const doc = await db.collection("households").add({
+    const doc = await db.collection("travelHouseholds").add({
       name, members: [currentUser.uid],
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    await db.collection("users").doc(currentUser.uid).set({ householdId: doc.id }, { merge: true });
+    await db.collection("travelUsers").doc(currentUser.uid).set({ householdId: doc.id }, { merge: true });
   } catch (e) {
     $("#household-error").textContent = "建立失敗，請稍後再試";
   }
@@ -228,12 +229,12 @@ $("#btn-join-household").addEventListener("click", async () => {
   $("#household-error").textContent = "";
   if (!code) { $("#household-error").textContent = "請輸入邀請碼"; return; }
   try {
-    const doc = await db.collection("households").doc(code).get();
+    const doc = await db.collection("travelHouseholds").doc(code).get();
     if (!doc.exists) { $("#household-error").textContent = "找不到這組邀請碼"; return; }
-    await db.collection("households").doc(code).update({
+    await db.collection("travelHouseholds").doc(code).update({
       members: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
     });
-    await db.collection("users").doc(currentUser.uid).set({ householdId: code }, { merge: true });
+    await db.collection("travelUsers").doc(currentUser.uid).set({ householdId: code }, { merge: true });
   } catch (e) {
     $("#household-error").textContent = "加入失敗，請確認邀請碼是否正確";
   }
@@ -269,7 +270,7 @@ $("#btn-invite").addEventListener("click", openInviteModal);
 
 /* ========= trips collection (shared per household) ========= */
 function tripsRef() {
-  return db.collection("households").doc(currentHouseholdId).collection("trips");
+  return db.collection("travelHouseholds").doc(currentHouseholdId).collection("trips");
 }
 function expensesRef(tripId) {
   return tripsRef().doc(tripId).collection("expenses");
